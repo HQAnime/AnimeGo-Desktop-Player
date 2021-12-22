@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 
 int main(int argc, char **argv)
 {
@@ -8,6 +9,7 @@ int main(int argc, char **argv)
     printf("Mac OS\n");
     #elif __unix__
     printf("Linux\n");
+    system("ls");
     #endif
 
     return 0;
