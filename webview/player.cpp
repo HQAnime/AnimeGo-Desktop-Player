@@ -5,8 +5,12 @@
 int WINAPI WinMain(HINSTANCE hInt, HINSTANCE hPrevInst, LPSTR lpCmdLine,
                    int nCmdShow) {
 #else
-int main() {
+int main(int argc, char* argv[]) {
 #endif
+  if (argc < 2) {
+      std::cout << "Usage: " << argv[0] << " URL" << std::endl;
+      return 1;
+  }
   webview::webview w(true, nullptr);
   w.set_title("AnimeGo");
   w.set_size(1280, 720, WEBVIEW_HINT_NONE);
@@ -35,7 +39,7 @@ int main() {
     std::cout << msg << std::endl;
     return "";
   });
-  w.navigate("https://goload.io/streaming.php?id=MTkxOTcz&title=Saikin+Yatotta+Maid+ga+Ayashii+Episode+7&typesub=SUB");
+  w.navigate(argv[1]);
   w.run();
   return 0;
 }
