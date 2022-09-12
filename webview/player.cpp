@@ -1,7 +1,23 @@
 #include "webview.h"
 
 #define WINDOW_WIDTH 1280
-#define WINDOW_HEIGHT 720
+#define WINDOW_HEIGHT 800
+
+bool enterFullScreen(HWND hwnd) {
+    HMONITOR hmon = MonitorFromWindow(hwnd,
+                                   MONITOR_DEFAULTTONEAREST);
+ MONITORINFO mi = { sizeof(mi) };
+    if (!GetMonitorInfo(hmon, &mi)) {
+        return false;
+    }
+    SetWindowLong(hwnd, GWL_STYLE, WS_POPUP);
+    SetWindowPos(hwnd, HWND_TOP,
+                 mi.rcMonitor.left, mi.rcMonitor.top,
+                 mi.rcMonitor.right - mi.rcMonitor.left,
+                 mi.rcMonitor.bottom - mi.rcMonitor.top,
+                 SWP_FRAMECHANGED);
+    return true;
+}
 
 int main(int argc, char* argv[]) {
     webview::webview w(true, nullptr);
@@ -18,6 +34,10 @@ int main(int argc, char* argv[]) {
     int x = (GetSystemMetrics(SM_CXSCREEN) - WINDOW_WIDTH) / 2;
     int y = (GetSystemMetrics(SM_CYSCREEN) - WINDOW_HEIGHT) / 2;
     SetWindowPos(hwnd, 0, x, y, 0, 0, SWP_NOZORDER | SWP_NOSIZE);
+
+    // hide vertical and horizontal scrollbars
+    SetWindowLong(hwnd, GWL_STYLE,
+                  GetWindowLong(hwnd, GWL_STYLE) & ~(WS_HSCROLL | WS_VSCROLL));
 #endif
 
     // send console.log to stdout
@@ -29,6 +49,10 @@ int main(int argc, char* argv[]) {
     //           "autoplay[i].remove();"
     //         "}"
     //       "});");
+
+    // disable right click
+    // w.init("document.addEventListener('contextmenu', event =>
+    // event.preventDefault());");
 
     // override window.open method to not do anything
     w.init("window.open = function() {};");
@@ -60,10 +84,31 @@ int main(int argc, char* argv[]) {
         "this.orgOpen.apply(this, arguments);"
         "}"
         "if (url.includes('.m3u8')) {"
+        "window.logger('start streaming video');"
         "this.orgOpen.apply(this, arguments);"
         "};");
-    w.bind("logger", [&](const std::string& msg) {
+
+    // detect fullscreen
+    w.init(
+        "var fullscreen = false;"
+        "document.addEventListener('fullscreenchange', function() {"
+        "fullscreen = !fullscreen;"
+        "window.callback('fullscreen');"
+        "});");
+
+    w.bind("logger", [](const std::string& msg) {
         printf("log: %s\n", msg.c_str());
+        return "";
+    });
+    w.bind("callback", [&w](const std::string& msg) {
+        printf("callback: %s\n", msg.c_str());
+        if (msg == "[\"fullscreen\"]") {
+            printf("enter fullscreen\n");
+            // toggle fullscreen or disable it using win32
+            HWND hwnd = (HWND)w.window();
+            enterFullScreen(hwnd);
+        }
+
         return "";
     });
 
