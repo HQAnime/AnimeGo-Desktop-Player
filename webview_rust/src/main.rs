@@ -1,3 +1,12 @@
+// #![cfg_attr(
+//     all(
+//         not(debug_assertions), 
+//         target_os = "windows"
+//     ),
+//     windows_subsystem = "windows"
+// )]
+
+
 use wry::{
     application::{
         dpi::{LogicalSize, Size},
@@ -85,7 +94,11 @@ fn callback(window: &Window, message: String) {
 }
 
 fn main() -> wry::Result<()> {
-    // check if this is debug
+    // get arguments
+    let args: Vec<String> = std::env::args().collect();
+    let default_url = "about:blank".to_string();
+    let url = args.get(1).unwrap_or(&default_url);
+    dprintln!("URL: {}", url);
 
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
@@ -96,7 +109,7 @@ fn main() -> wry::Result<()> {
         .expect("Failed to create window");
 
     let _webview = WebViewBuilder::new(window)?
-        .with_url("https://gogohd.net/streaming.php?id=MTkzMTQ1&title=Jiu+Tian+Xuan+Di+Jue+2+Episode+44&typesub=SUB")?
+        .with_url(url)?
         .with_ipc_handler(callback)
         .with_initialization_script(JS_SCRIPT)
         .with_devtools(IS_DEBUG)
