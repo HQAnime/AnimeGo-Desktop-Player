@@ -14,7 +14,7 @@ const JS_SCRIPT: &str = r#"
         window.ipc.postMessage(JSON.stringify(args));
     }
 
-    const valid_video_extensions = [".m3u8", ".mp4", ".webm", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".mpg", ".mpeg", ".m4v", ".3gp", ".3g2", ".f4v", ".f4p", ".f4a", ".f4b"];
+    const valid_video_extensions = [".m3u8", ".ts", ".mp4", ".webm", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".mpg", ".mpeg", ".m4v", ".3gp", ".3g2", ".f4v", ".f4p", ".f4a", ".f4b"];
 
     XMLHttpRequest.prototype.orgOpen = XMLHttpRequest.prototype.open;
     var counter = 0;
@@ -26,10 +26,11 @@ const JS_SCRIPT: &str = r#"
             send_rust("Allowed");
             return;
         }
-        if (valid_video_extensions.any((ext) => url.contains(ext))) {
-            send_rust('start streaming video');
+
+        // check if the url is a video and allow it
+        if (valid_video_extensions.some((ext) => url.includes(ext))) {
+            send_rust('Streaming');
             this.orgOpen.apply(this, arguments);
-            send_rust("Allowed");
             return;
         };
 
