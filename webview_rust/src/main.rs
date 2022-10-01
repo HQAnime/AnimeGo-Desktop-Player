@@ -9,23 +9,31 @@ use wry::{
 };
 
 const JS_SCRIPT: &str = r#"
+    // a wrapper to send messages to the rust side
     function send_rust(...args) {
         window.ipc.postMessage(JSON.stringify(args));
     }
 
+    const valid_video_extensions = [".m3u8", ".mp4", ".webm", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".mpg", ".mpeg", ".m4v", ".3gp", ".3g2", ".f4v", ".f4p", ".f4a", ".f4b"];
+
     XMLHttpRequest.prototype.orgOpen = XMLHttpRequest.prototype.open;
     var counter = 0;
     XMLHttpRequest.prototype.open = function(method, url, async, user, password) {
-        send_rust([method, url, async, user, password]);
+        send_rust(method, url, async, user, password);
         if (counter < 5) {
             counter++;
-            send_rust(counter);
             this.orgOpen.apply(this, arguments);
+            send_rust("Allowed");
+            return;
         }
-        if (url.includes('.m3u8')) {
+        if (valid_video_extensions.any((ext) => url.contains(ext))) {
             send_rust('start streaming video');
             this.orgOpen.apply(this, arguments);
+            send_rust("Allowed");
+            return;
         };
+
+        send_rust("Blocked");
     };
 
     // block popups
@@ -68,7 +76,7 @@ fn main() -> wry::Result<()> {
         *control_flow = ControlFlow::Wait;
 
         match event {
-            Event::NewEvents(StartCause::Init) => println!("Wry has started!"),
+            Event::NewEvents(StartCause::Init) => println!("Webview started"),
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 ..
