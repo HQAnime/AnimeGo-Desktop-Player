@@ -6,3 +6,6 @@
 **/*.so
 **/*.dylib
 .vscode/
+
+# rust
+**/target/
