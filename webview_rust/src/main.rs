@@ -3,15 +3,22 @@ use wry::{
         dpi::{LogicalSize, Size},
         event::{Event, StartCause, WindowEvent},
         event_loop::{ControlFlow, EventLoop},
-        window::{Window, WindowBuilder},
+        window::{Fullscreen, Window, WindowBuilder},
     },
     webview::WebViewBuilder,
 };
+
+const IS_DEBUG: bool = cfg!(debug_assertions);
 
 const JS_SCRIPT: &str = r#"
     // a wrapper to send messages to the rust side
     function send_rust(...args) {
         window.ipc.postMessage(JSON.stringify(args));
+    }
+
+    // send an event message with event:: prefix
+    function send_event(event) {
+        send_rust('event::' + event);
     }
 
     const valid_video_extensions = [".m3u8", ".ts", ".mp4", ".webm", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".mpg", ".mpeg", ".m4v", ".3gp", ".3g2", ".f4v", ".f4p", ".f4a", ".f4b"];
@@ -47,15 +54,38 @@ const JS_SCRIPT: &str = r#"
             link.href = 'javascript:void(0)';
         });
     });
+
+    // detect fullscreen
+    document.addEventListener('fullscreenchange', function() {
+        send_event('fullscreen');
+    });
 "#;
 
-fn callback(_window: &Window, message: String) {
-    println!("Message from JS: {}", message);
+// debug println macro
+macro_rules! dprintln {
+    ($($arg:tt)*) => {
+        if IS_DEBUG {
+            println!($($arg)*);
+        }
+    }
+}
+
+fn callback(window: &Window, message: String) {
+    let events = message.contains("event::");
+    if events {
+        let event = message.replace("\"", "").replace("event::", "");
+        dprintln!("Event: {}", event);
+        match event.as_str() {
+            "[fullscreen]" => handle_fullscreen(window),
+            _ => {}
+        }
+    } else {
+        dprintln!("Message: {}", message);
+    }
 }
 
 fn main() -> wry::Result<()> {
     // check if this is debug
-    let is_debug = cfg!(debug_assertions);
 
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
@@ -69,7 +99,7 @@ fn main() -> wry::Result<()> {
         .with_url("https://gogohd.net/streaming.php?id=MTkzMTQ1&title=Jiu+Tian+Xuan+Di+Jue+2+Episode+44&typesub=SUB")?
         .with_ipc_handler(callback)
         .with_initialization_script(JS_SCRIPT)
-        .with_devtools(is_debug)
+        .with_devtools(IS_DEBUG)
         .build()
         .expect("Failed to create webview");
 
@@ -77,7 +107,7 @@ fn main() -> wry::Result<()> {
         *control_flow = ControlFlow::Wait;
 
         match event {
-            Event::NewEvents(StartCause::Init) => println!("Webview started"),
+            Event::NewEvents(StartCause::Init) => dprintln!("Webview started"),
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 ..
@@ -85,4 +115,15 @@ fn main() -> wry::Result<()> {
             _ => (),
         }
     });
+}
+
+fn handle_fullscreen(window: &Window) {
+    let fullscreen = window.fullscreen();
+    if fullscreen.is_some() {
+        window.set_fullscreen(None);
+        dprintln!("Fullscreen disabled");
+    } else {
+        window.set_fullscreen(Some(Fullscreen::Borderless(window.current_monitor())));
+        dprintln!("Fullscreen enabled");
+    }
 }
