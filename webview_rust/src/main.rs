@@ -15,7 +15,7 @@ use wry::{
 
 const IS_DEBUG: bool = cfg!(debug_assertions);
 
-// A simple html with a single video element
+// A simple html with a single video element with script to fullscreen it.
 const HTML_TEMPLATE: &str = r#"
 <!DOCTYPE html>
 <html>
@@ -24,11 +24,21 @@ const HTML_TEMPLATE: &str = r#"
         <title>AnimeGo Player</title>
     </head>
     <body style="background-color: black;">
-        <!-- Video should fit the window and support fullscreem -->
-        <video id="video" width="100%" height="100%" controls autoplay style="object-fit: fit;">
+        <video id="video" controls autoplay>
             <source src="|HOLDER|">
         </video>
     </body>
+    <script>
+        // fullscreen the video on macOS
+        window.onload = function() {
+            const video = document.getElementById("video");
+            video.style.width = "100%";
+            video.style.height = "100%";
+            video.style.objectFit = "contain";
+            video.style.position = "absolute";
+            video.webkitEnterFullscreen();
+        }
+    </script>
 </html>
 "#;
 
@@ -53,7 +63,7 @@ const JS_SCRIPT: &str = r#"
     const timer_map = {};
     const timer = () => {
         if (has_seen_video) {
-            clearInterval(timer_map.interval);
+            return;
         }
 
         if (!has_setup) {
@@ -265,6 +275,7 @@ fn handle_video_player(window: &Window, event_value: &String) -> wry::Result<()>
 
     let _webview = WebViewBuilder::new(window)?
         .with_html(final_html)?
+        .with_devtools(IS_DEBUG)
         .build()
         .expect("Failed to create webview");
 
