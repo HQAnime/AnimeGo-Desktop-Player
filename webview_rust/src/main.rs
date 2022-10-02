@@ -53,46 +53,47 @@ const JS_SCRIPT: &str = r#"
         send_rust('event::' + event, message);
     }
 
-    const valid_video_extensions = [".m3u8", ".ts", ".mp4", ".webm", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".mpg", ".mpeg", ".m4v", ".3gp", ".3g2", ".f4v", ".f4p", ".f4a", ".f4b"];
-    source_url = window.location.href;
+    // macOS needs some additional work to fullscreen the video
+    const is_mac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
     var has_seen_video = false;
     var has_setup = false;
 
     // remove iframes and check for video src
-    var removed_iframe_count = 0;
-    const timer_map = {};
-    const timer = () => {
-        if (has_seen_video) {
-            return;
-        }
-
-        if (!has_setup) {
-            send_rust('Setup');
-            // Add a LOADING text to the center of the screen with a black background and on top of everything
-            var loading_text = document.createElement("div");
-            loading_text.style.position = "absolute";
-            loading_text.style.top = "50%";
-            loading_text.style.left = "50%";
-            loading_text.style.transform = "translate(-50%, -50%)";
-            loading_text.style.color = "white";
-            loading_text.style.fontSize = "128px";
-            loading_text.style.fontWeight = "bold";
-            loading_text.style.backgroundColor = "black";
-            loading_text.style.padding = "10px";
-            loading_text.style.borderRadius = "10px";
-            loading_text.innerHTML = "LOADING...";
-            document.body.appendChild(loading_text);
-
-            has_setup = true;
-        }
-
-        send_rust('tick');
+    setInterval(function() {
         const iframes = document.querySelectorAll('iframe');
         iframes.forEach(function(iframe) {
             iframe.remove();
             removed_iframe_count += 1;
             send_rust('iframe removed');
         });
+        
+        if (!has_setup) {
+            send_rust('Setup');
+            // The loading is only used on macOS since this webview will be hidden later
+            if (is_mac) {
+                var loading_text = document.createElement("div");
+                loading_text.id = "loading_text";
+                loading_text.style.position = "absolute";
+                loading_text.style.top = "50%";
+                loading_text.style.left = "50%";
+                loading_text.style.transform = "translate(-50%, -50%)";
+                loading_text.style.color = "white";
+                loading_text.style.fontSize = "128px";
+                loading_text.style.fontWeight = "bold";
+                loading_text.style.backgroundColor = "black";
+                loading_text.style.padding = "10px";
+                loading_text.style.borderRadius = "10px";
+                loading_text.innerHTML = "LOADING...";
+                document.body.appendChild(loading_text);
+            }
+            has_setup = true;
+        }
+        
+        if (has_seen_video) {
+            return;
+        }
+
+        send_rust('tick');
 
         const videos = document.querySelectorAll('video');
         if (videos && videos.length > 0) {
@@ -100,8 +101,14 @@ const JS_SCRIPT: &str = r#"
             const video_src = the_video.src;
             if (video_src != "") {
                 has_seen_video = true;
-                clearInterval(timer_map.interval);
-                send_event('video_player', video_src);
+
+                // this event is only required on macOS
+                if (is_mac) {
+                    send_event('video_player', video_src);
+                } else {
+                    the_video.click();
+                    the_video.play();
+                }
             } else {
                 send_rust("trying to play video");
                 // play and pause the video to get the src
@@ -112,9 +119,12 @@ const JS_SCRIPT: &str = r#"
                 }, 1000);
             }
         }
-    }
-    timer_map.interval = setInterval(timer, 1000);
+    }, is_mac ? 1000 : 500);
 
+    const valid_video_extensions = [".m3u8", ".ts", ".mp4", ".webm", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".mpg", ".mpeg", ".m4v", ".3gp", ".3g2", ".f4v", ".f4p", ".f4a", ".f4b"];
+    source_url = window.location.href;
+
+    // block unnecessary requests
     XMLHttpRequest.prototype.orgOpen = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function(method, url, async, user, password) {
         send_rust(method, url, async, user, password);
@@ -145,9 +155,9 @@ const JS_SCRIPT: &str = r#"
     // remove all href links to prevent going to another page
     document.addEventListener('DOMContentLoaded', function() {
         const links = document.querySelectorAll('[href]');
-        // links.forEach(function(link) {
-        //     link.href = 'javascript:void(0)';
-        // });
+        links.forEach(function(link) {
+            link.href = 'javascript:void(0)';
+        });
     });
 
     // detect fullscreen
@@ -155,21 +165,13 @@ const JS_SCRIPT: &str = r#"
         send_event('fullscreen');
     });
 
-    // // enable fullscreen on macOS
-    // document.addEventListener('keydown', function(e) {
-    //     if (e.key === 'f' && e.metaKey) {
-    //         send_event('fullscreen');
-    //         // adjust the video size to fit the screen
-    //         const video = document.querySelector('video');
-    //         if (video) {
-    //             const first_video = video[0]
-    //             first_video.style.width = '100%';
-    //             first_video.style.height = '100%';
-    //             # add -webkit-full-screen
-    //             first_video.webkitEnterFullscreen();
-    //         }
-    //     }
-    // });
+    // remove right click menu
+    document.addEventListener('contextmenu', function(e) {
+        e.preventDefault();
+    });
+
+    // styling changes
+    document.body.style.backgroundColor = "black";
 "#;
 
 // debug println macro
@@ -192,7 +194,7 @@ fn main() -> wry::Result<()> {
     let window = WindowBuilder::new()
         .with_title("AnimeGo")
         // set a minimum size for the window
-        .with_inner_size(Size::Logical(LogicalSize::new(1280.0, 720.0)))
+        .with_inner_size(Size::Logical(LogicalSize::new(1280.0, 760.0)))
         .build(&event_loop)
         .expect("Failed to create window");
 
