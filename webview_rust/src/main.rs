@@ -1,8 +1,5 @@
 #![cfg_attr(
-    all(
-        not(debug_assertions), 
-        target_os = "windows"
-    ),
+    all(not(debug_assertions), target_os = "windows"),
     windows_subsystem = "windows"
 )]
 
@@ -13,12 +10,12 @@ use wry::{
         event_loop::{ControlFlow, EventLoop},
         window::{Fullscreen, Window, WindowBuilder},
     },
-    webview::{WebViewBuilder, WebView},
+    webview::WebViewBuilder,
 };
 
 const IS_DEBUG: bool = cfg!(debug_assertions);
 
-// A simple html with a single video element 
+// A simple html with a single video element
 const HTML_TEMPLATE: &str = r#"
 <!DOCTYPE html>
 <html>
@@ -26,8 +23,9 @@ const HTML_TEMPLATE: &str = r#"
         <meta charset="utf-8">
         <title>AnimeGo Player</title>
     </head>
-    <body>
-        <video id="video" width="100%" height="100%" controls autoplay>
+    <body style="background-color: black;">
+        <!-- Video should fit the window and support fullscreem -->
+        <video id="video" width="100%" height="100%" controls autoplay style="object-fit: fit;">
             <source src="|HOLDER|">
         </video>
     </body>
@@ -48,6 +46,7 @@ const JS_SCRIPT: &str = r#"
     const valid_video_extensions = [".m3u8", ".ts", ".mp4", ".webm", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".mpg", ".mpeg", ".m4v", ".3gp", ".3g2", ".f4v", ".f4p", ".f4a", ".f4b"];
     source_url = window.location.href;
     var has_seen_video = false;
+    var has_setup = false;
 
     // remove iframes and check for video src
     var removed_iframe_count = 0;
@@ -57,17 +56,32 @@ const JS_SCRIPT: &str = r#"
             clearInterval(timer_map.interval);
         }
 
+        if (!has_setup) {
+            send_rust('Setup');
+            // Add a LOADING text to the center of the screen with a black background and on top of everything
+            var loading_text = document.createElement("div");
+            loading_text.style.position = "absolute";
+            loading_text.style.top = "50%";
+            loading_text.style.left = "50%";
+            loading_text.style.transform = "translate(-50%, -50%)";
+            loading_text.style.color = "white";
+            loading_text.style.fontSize = "128px";
+            loading_text.style.fontWeight = "bold";
+            loading_text.style.backgroundColor = "black";
+            loading_text.style.padding = "10px";
+            loading_text.style.borderRadius = "10px";
+            loading_text.innerHTML = "LOADING...";
+            document.body.appendChild(loading_text);
+
+            has_setup = true;
+        }
+
         send_rust('tick');
         const iframes = document.querySelectorAll('iframe');
         iframes.forEach(function(iframe) {
             iframe.remove();
             removed_iframe_count += 1;
             send_rust('iframe removed');
-
-            if (removed_iframe_count == 2) {
-                // resize the native window
-                send_event('resize_window');
-            }
         });
 
         const videos = document.querySelectorAll('video');
@@ -76,20 +90,20 @@ const JS_SCRIPT: &str = r#"
             const video_src = the_video.src;
             if (video_src != "") {
                 has_seen_video = true;
+                clearInterval(timer_map.interval);
                 send_event('video_player', video_src);
             } else {
                 send_rust("trying to play video");
                 // play and pause the video to get the src
                 the_video.click()
                 the_video.play();
-                // wait a bit for the video to load
-                setTimeout(function() {
+                setTimeout(() => {
                     the_video.pause();
                 }, 1000);
             }
         }
     }
-    timer_map.interval = setInterval(timer, 500);
+    timer_map.interval = setInterval(timer, 1000);
 
     XMLHttpRequest.prototype.orgOpen = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function(method, url, async, user, password) {
@@ -116,15 +130,7 @@ const JS_SCRIPT: &str = r#"
     };
 
     // block popups
-    window.open = function() { 
-        send_rust('Disabled popup')
-
-        // allow fullscreen
-        const video = document.getElementsByTagName('video')[0];
-        if (video) {
-            video.requestFullscreen();
-        }
-    };
+    window.open = function() { send_rust('Disabled popup') };
 
     // remove all href links to prevent going to another page
     document.addEventListener('DOMContentLoaded', function() {
@@ -176,7 +182,7 @@ fn main() -> wry::Result<()> {
     let window = WindowBuilder::new()
         .with_title("AnimeGo")
         // set a minimum size for the window
-        .with_inner_size(Size::Logical(LogicalSize::new(128.0, 72.0)))
+        .with_inner_size(Size::Logical(LogicalSize::new(1280.0, 720.0)))
         .build(&event_loop)
         .expect("Failed to create window");
 
@@ -206,7 +212,8 @@ fn ipc_callback(window: &Window, message: String) {
     let is_events = message.contains("event::");
     if is_events {
         let event_message: Vec<String> = message
-            .replace("\"", "").replace("event::", "")
+            .replace("\"", "")
+            .replace("event::", "")
             .split_terminator(',')
             .map(|s| s.to_string())
             .collect();
@@ -219,7 +226,7 @@ fn ipc_callback(window: &Window, message: String) {
             "[resize_window" => handle_resize_window(window, event_value),
             "[video_player" => {
                 let _ = handle_video_player(window, event_value);
-            },
+            }
             _ => {}
         }
     } else {
@@ -242,24 +249,35 @@ fn handle_resize_window(window: &Window, _event_value: &String) {
     window.set_min_inner_size(Some(Size::Logical(LogicalSize::new(1280.0, 720.0))));
 }
 
-fn handle_video_player(_: &Window, event_value: &String) -> wry::Result<()> {
+fn handle_video_player(window: &Window, event_value: &String) -> wry::Result<()> {
     let video_src = event_value.replace("]", "");
     dprintln!("Video player: {}", video_src);
-    let new_window = WindowBuilder::new()
-        .with_title("AnimeGo")
-        .with_inner_size(Size::Logical(LogicalSize::new(1280.0, 720.0)))
-        .build(&EventLoop::new())?;
-    
     let final_html = HTML_TEMPLATE.replace("|HOLDER|", &video_src);
 
     // create a new window to play the video
-    let _webview = WebViewBuilder::new(new_window)?
+    let event_loop = EventLoop::new();
+    let window = WindowBuilder::new()
+        .with_title("AnimeGo Player")
+        // set a minimum size for the window
+        .with_fullscreen(Some(Fullscreen::Borderless(window.current_monitor())))
+        .build(&event_loop)
+        .expect("Failed to create window");
+
+    let _webview = WebViewBuilder::new(window)?
         .with_html(final_html)?
-        .with_ipc_handler(ipc_callback)
-        .with_initialization_script(JS_SCRIPT)
-        .with_devtools(IS_DEBUG)
         .build()
         .expect("Failed to create webview");
 
-    Ok(())
+    event_loop.run(move |event, _, control_flow| {
+        *control_flow = ControlFlow::Wait;
+
+        match event {
+            Event::NewEvents(StartCause::Init) => dprintln!("Webview started"),
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            } => *control_flow = ControlFlow::Exit,
+            _ => (),
+        }
+    });
 }
