@@ -1,11 +1,10 @@
-// #![cfg_attr(
-//     all(
-//         not(debug_assertions), 
-//         target_os = "windows"
-//     ),
-//     windows_subsystem = "windows"
-// )]
-
+#![cfg_attr(
+    all(
+        not(debug_assertions), 
+        target_os = "windows"
+    ),
+    windows_subsystem = "windows"
+)]
 
 use wry::{
     application::{
@@ -14,10 +13,26 @@ use wry::{
         event_loop::{ControlFlow, EventLoop},
         window::{Fullscreen, Window, WindowBuilder},
     },
-    webview::WebViewBuilder,
+    webview::{WebViewBuilder, WebView},
 };
 
 const IS_DEBUG: bool = cfg!(debug_assertions);
+
+// A simple html with a single video element 
+const HTML_TEMPLATE: &str = r#"
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <title>AnimeGo Player</title>
+    </head>
+    <body>
+        <video id="video" width="100%" height="100%" controls autoplay>
+            <source src="|HOLDER|">
+        </video>
+    </body>
+</html>
+"#;
 
 const JS_SCRIPT: &str = r#"
     // a wrapper to send messages to the rust side
@@ -26,26 +41,73 @@ const JS_SCRIPT: &str = r#"
     }
 
     // send an event message with event:: prefix
-    function send_event(event) {
-        send_rust('event::' + event);
+    function send_event(event, message) {
+        send_rust('event::' + event, message);
     }
 
     const valid_video_extensions = [".m3u8", ".ts", ".mp4", ".webm", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".mpg", ".mpeg", ".m4v", ".3gp", ".3g2", ".f4v", ".f4p", ".f4a", ".f4b"];
+    source_url = window.location.href;
+    var has_seen_video = false;
+
+    // remove iframes and check for video src
+    var removed_iframe_count = 0;
+    const timer_map = {};
+    const timer = () => {
+        if (has_seen_video) {
+            clearInterval(timer_map.interval);
+        }
+
+        send_rust('tick');
+        const iframes = document.querySelectorAll('iframe');
+        iframes.forEach(function(iframe) {
+            iframe.remove();
+            removed_iframe_count += 1;
+            send_rust('iframe removed');
+
+            if (removed_iframe_count == 2) {
+                // resize the native window
+                send_event('resize_window');
+            }
+        });
+
+        const videos = document.querySelectorAll('video');
+        if (videos && videos.length > 0) {
+            const the_video = videos[0];
+            const video_src = the_video.src;
+            if (video_src != "") {
+                has_seen_video = true;
+                send_event('video_player', video_src);
+            } else {
+                send_rust("trying to play video");
+                // play and pause the video to get the src
+                the_video.click()
+                the_video.play();
+                // wait a bit for the video to load
+                setTimeout(function() {
+                    the_video.pause();
+                }, 1000);
+            }
+        }
+    }
+    timer_map.interval = setInterval(timer, 500);
 
     XMLHttpRequest.prototype.orgOpen = XMLHttpRequest.prototype.open;
-    var counter = 0;
     XMLHttpRequest.prototype.open = function(method, url, async, user, password) {
         send_rust(method, url, async, user, password);
-        if (counter < 5) {
-            counter++;
-            this.orgOpen.apply(this, arguments);
+
+        // we haven't find the video yet
+        if (!has_seen_video) {
+            // always allow before we find the video
             send_rust("Allowed");
+            this.orgOpen.apply(this, arguments);
             return;
         }
 
+        // apply very strict rules once the video starts playing
         // check if the url is a video and allow it
         if (valid_video_extensions.some((ext) => url.includes(ext))) {
             send_rust('Streaming');
+            has_seen_video = true;
             this.orgOpen.apply(this, arguments);
             return;
         };
@@ -54,20 +116,44 @@ const JS_SCRIPT: &str = r#"
     };
 
     // block popups
-    window.open = function() { send_rust('Disabled popup') };
+    window.open = function() { 
+        send_rust('Disabled popup')
+
+        // allow fullscreen
+        const video = document.getElementsByTagName('video')[0];
+        if (video) {
+            video.requestFullscreen();
+        }
+    };
 
     // remove all href links to prevent going to another page
     document.addEventListener('DOMContentLoaded', function() {
         const links = document.querySelectorAll('[href]');
-        links.forEach(function(link) {
-            link.href = 'javascript:void(0)';
-        });
+        // links.forEach(function(link) {
+        //     link.href = 'javascript:void(0)';
+        // });
     });
 
     // detect fullscreen
     document.addEventListener('fullscreenchange', function() {
         send_event('fullscreen');
     });
+
+    // // enable fullscreen on macOS
+    // document.addEventListener('keydown', function(e) {
+    //     if (e.key === 'f' && e.metaKey) {
+    //         send_event('fullscreen');
+    //         // adjust the video size to fit the screen
+    //         const video = document.querySelector('video');
+    //         if (video) {
+    //             const first_video = video[0]
+    //             first_video.style.width = '100%';
+    //             first_video.style.height = '100%';
+    //             # add -webkit-full-screen
+    //             first_video.webkitEnterFullscreen();
+    //         }
+    //     }
+    // });
 "#;
 
 // debug println macro
@@ -76,20 +162,6 @@ macro_rules! dprintln {
         if IS_DEBUG {
             println!($($arg)*);
         }
-    }
-}
-
-fn callback(window: &Window, message: String) {
-    let events = message.contains("event::");
-    if events {
-        let event = message.replace("\"", "").replace("event::", "");
-        dprintln!("Event: {}", event);
-        match event.as_str() {
-            "[fullscreen]" => handle_fullscreen(window),
-            _ => {}
-        }
-    } else {
-        dprintln!("Message: {}", message);
     }
 }
 
@@ -104,13 +176,13 @@ fn main() -> wry::Result<()> {
     let window = WindowBuilder::new()
         .with_title("AnimeGo")
         // set a minimum size for the window
-        .with_min_inner_size(Size::Logical(LogicalSize::new(800.0, 600.0)))
+        .with_inner_size(Size::Logical(LogicalSize::new(128.0, 72.0)))
         .build(&event_loop)
         .expect("Failed to create window");
 
     let _webview = WebViewBuilder::new(window)?
         .with_url(url)?
-        .with_ipc_handler(callback)
+        .with_ipc_handler(ipc_callback)
         .with_initialization_script(JS_SCRIPT)
         .with_devtools(IS_DEBUG)
         .build()
@@ -130,7 +202,32 @@ fn main() -> wry::Result<()> {
     });
 }
 
-fn handle_fullscreen(window: &Window) {
+fn ipc_callback(window: &Window, message: String) {
+    let is_events = message.contains("event::");
+    if is_events {
+        let event_message: Vec<String> = message
+            .replace("\"", "").replace("event::", "")
+            .split_terminator(',')
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(event_message.len(), 2);
+        let event_name = event_message[0].as_str();
+        let event_value = &event_message[1];
+        dprintln!("Event: {}", event_name);
+        match event_name {
+            "[fullscreen" => handle_fullscreen(window, event_value),
+            "[resize_window" => handle_resize_window(window, event_value),
+            "[video_player" => {
+                let _ = handle_video_player(window, event_value);
+            },
+            _ => {}
+        }
+    } else {
+        dprintln!("Message: {}", message);
+    }
+}
+
+fn handle_fullscreen(window: &Window, _event_value: &String) {
     let fullscreen = window.fullscreen();
     if fullscreen.is_some() {
         window.set_fullscreen(None);
@@ -139,4 +236,30 @@ fn handle_fullscreen(window: &Window) {
         window.set_fullscreen(Some(Fullscreen::Borderless(window.current_monitor())));
         dprintln!("Fullscreen enabled");
     }
+}
+
+fn handle_resize_window(window: &Window, _event_value: &String) {
+    window.set_min_inner_size(Some(Size::Logical(LogicalSize::new(1280.0, 720.0))));
+}
+
+fn handle_video_player(_: &Window, event_value: &String) -> wry::Result<()> {
+    let video_src = event_value.replace("]", "");
+    dprintln!("Video player: {}", video_src);
+    let new_window = WindowBuilder::new()
+        .with_title("AnimeGo")
+        .with_inner_size(Size::Logical(LogicalSize::new(1280.0, 720.0)))
+        .build(&EventLoop::new())?;
+    
+    let final_html = HTML_TEMPLATE.replace("|HOLDER|", &video_src);
+
+    // create a new window to play the video
+    let _webview = WebViewBuilder::new(new_window)?
+        .with_html(final_html)?
+        .with_ipc_handler(ipc_callback)
+        .with_initialization_script(JS_SCRIPT)
+        .with_devtools(IS_DEBUG)
+        .build()
+        .expect("Failed to create webview");
+
+    Ok(())
 }
