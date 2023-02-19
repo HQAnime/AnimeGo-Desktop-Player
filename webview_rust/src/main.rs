@@ -101,6 +101,7 @@ const JS_SCRIPT: &str = r#"
             const video_src = the_video.src;
             if (video_src != "") {
                 has_seen_video = true;
+                send_rust('Video', video_src);
 
                 // this event is only required on macOS
                 if (is_mac) {
@@ -119,9 +120,10 @@ const JS_SCRIPT: &str = r#"
                 }, 1000);
             }
         }
-    }, is_mac ? 1000 : 500);
+    }, is_mac ? 1000 : 300);
 
-    const valid_video_extensions = [".m3u8", ".ts", ".mp4", ".webm", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".mpg", ".mpeg", ".m4v", ".3gp", ".3g2", ".f4v", ".f4p", ".f4a", ".f4b"];
+    const valid_video_extensions = [".m3u8", ".ts", ".jpg", ".svg", ".ico", ".css", ".tff", ".vtt", ".srt", ".html", ".woff", ".js"];
+    const valid_url_string = ["/ep."];
     source_url = window.location.href;
 
     // block unnecessary requests
@@ -139,7 +141,7 @@ const JS_SCRIPT: &str = r#"
 
         // apply very strict rules once the video starts playing
         // check if the url is a video and allow it
-        if (valid_video_extensions.some((ext) => url.includes(ext))) {
+        if (valid_video_extensions.some((ext) => url.endsWith(ext)) || valid_url_string.some((str) => url.includes(str))) {
             send_rust('Streaming');
             has_seen_video = true;
             this.orgOpen.apply(this, arguments);
